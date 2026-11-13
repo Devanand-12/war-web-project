@@ -1,4 +1,3 @@
-
 pipeline {
     agent any
 
@@ -14,12 +13,8 @@ pipeline {
     }
 
     environment {
-        NEXUS_URL = 'http://localhost:8081/repository/maven-releases'
-        NEXUS_WAR = 'koddas/web/war/wwp/1.0.0/wwp-1.0.0.war'
-
         TOMCAT_URL = 'http://localhost:8082'
         TOMCAT_CONTEXT = '/wwp'
-
         WAR_FILE = 'wwp-1.0.0.war'
         SONAR_PROJECT = 'wwp'
     }
@@ -70,10 +65,11 @@ pipeline {
         stage('Package WAR') {
             steps {
                 echo 'Packaging application into WAR file'
+
                 bat 'mvn package -DskipTests'
 
                 script {
-                    if (!fileExists('target/wwp-1.0.0.war')) {
+                    if (!fileExists("target/${WAR_FILE}")) {
                         error 'WAR file was not generated!'
                     }
                 }
@@ -85,8 +81,6 @@ pipeline {
             steps {
                 echo 'Starting SonarQube code analysis'
 
-                // Must match the configured installation name:
-                // SonarQube-Server
                 withSonarQubeEnv('SonarQube-Server') {
                     bat '''
                         mvn org.sonarsource.scanner.maven:sonar-maven-plugin:5.8.0.7211:sonar
@@ -97,37 +91,7 @@ pipeline {
             }
         }
 
-        // 7. Wait for SonarQube Quality Gate
-        // stage('Quality Gate') {
-        //     steps {
-        //         echo 'Waiting for SonarQube Quality Gate result'
-
-        //         timeout(time: 5, unit: 'MINUTES') {
-        //             script {
-        //                 def qualityGate = waitForQualityGate(
-        //                     abortPipeline: false
-        //                 )
-
-        //                 echo "Quality Gate Status: ${qualityGate.status}"
-        //             }
-        //         }
-        //     }
-        // }
-
-        // 8. Upload WAR to Nexus
-        stage('Upload to Nexus') {
-            steps {
-                echo 'Uploading WAR file to Nexus Repository'
-
-                bat '''
-                    mvn deploy -DskipTests
-
-                    if errorlevel 1 exit /b 1
-                '''
-            }
-        }
-
-        // 9. Archive WAR in Jenkins
+        // 7. Archive WAR in Jenkins
         stage('Archive WAR') {
             steps {
                 echo 'Archiving WAR file in Jenkins'
@@ -139,37 +103,16 @@ pipeline {
             }
         }
 
-        // 10. Download WAR from Nexus
-        stage('Download from Nexus') {
-            steps {
-                echo 'Downloading WAR file from Nexus'
-
-                bat '''
-                    if not exist deployment mkdir deployment
-
-                    curl.exe --fail --location --silent --show-error ^
-                      --output deployment\\wwp-1.0.0.war ^
-                      "%NEXUS_URL%/%NEXUS_WAR%"
-
-                    if errorlevel 1 (
-                        echo ERROR: Nexus download failed.
-                        exit /b 1
-                    )
-
-                    if not exist deployment\\wwp-1.0.0.war (
-                        echo ERROR: WAR file not found.
-                        exit /b 1
-                    )
-
-                    echo WAR downloaded successfully from Nexus.
-                '''
-            }
-        }
-
-        // 11. Deploy WAR to Tomcat
+        // 8. Deploy WAR directly from Jenkins workspace to Tomcat
         stage('Deploy to Tomcat') {
             steps {
-                echo 'Deploying WAR file to Tomcat'
+                echo 'Deploying WAR directly from Jenkins workspace'
+
+                script {
+                    if (!fileExists("target/${WAR_FILE}")) {
+                        error 'WAR file not found in Jenkins workspace!'
+                    }
+                }
 
                 withCredentials([
                     usernamePassword(
@@ -181,7 +124,7 @@ pipeline {
                     bat '''
                         curl.exe --fail --silent --show-error ^
                           --user "%TOMCAT_USR%:%TOMCAT_PSW%" ^
-                          --upload-file "deployment\\wwp-1.0.0.war" ^
+                          --upload-file "target\\wwp-1.0.0.war" ^
                           "%TOMCAT_URL%/manager/text/deploy?path=%TOMCAT_CONTEXT%&update=true"
 
                         if errorlevel 1 (
@@ -195,7 +138,7 @@ pipeline {
             }
         }
 
-        // 12. Application health check
+        // 9. Application health check
         stage('Health Check') {
             steps {
                 echo 'Checking deployed application'
